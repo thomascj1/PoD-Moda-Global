@@ -1,0 +1,314 @@
+Book de Variáveis e Features – Fashion Retail Global
+
+Este repositório contém o código e a documentação para gerar um Book de Variáveis e calcular features agregadas por cliente a partir de um arquivo de transações de uma empresa de moda global. A seguir, um resumo dos passos, métricas criadas e os scripts completos para rodar no Google Colab (ou localmente). Tudo pronto para adicionar ao seu portfólio no GitHub.
+
+1. Visão Geral do Projeto
+
+Objetivo
+
+Documentar as variáveis “raw” (colunas originais) e gerar métricas derivadas (RFM, métricas avançadas, momentum, intervalos entre compras, proporções, agregados por dimensão e flags) para janelas de 1, 3, 6, 9 e 12 meses até a data-alvo 28/02/2025.
+Fornecer tanto um template de documentação (Book de Variáveis) quanto as tabelas de features reais por Customer ID.
+Principais etapas
+
+Leitura: importar o CSV de transações (19 colunas)
+Template de Documentação: montar um CSV com
+variable_name
+data_type
+description
+business_rule
+periodicity
+target_dates
+Features por Cliente: agrupar por Customer ID e gerar colunas como total_amt_u3m, frequency_u6m, avg_discount_rate_u1m etc.
+Métricas Extras: momentum, intervalos entre compras, return_rate, promo_share, store_concentration, top_product_share, flags de cliente (high_value, loyal, seasonal).
+2. Dataset
+
+Linhas (registros): (consultar com código)
+Colunas (variáveis): 19
+Coluna	Tipo
+Invoice ID	object
+Line	int64
+Customer ID	int64
+Product ID	int64
+Size	object
+Color	object
+Unit Price	float64
+Quantity	int64
+Date	datetime
+Discount	float64
+Line Total	float64
+Store ID	int64
+Employee ID	int64
+Currency	object
+Currency Symbol	object
+SKU	object
+Transaction Type	object
+Payment Method	object
+Invoice Total	float64
+Cobertura temporal: 12 meses até 28/02/2025
+Principais dimensões:
+Clientes únicos (Customer ID)
+Produtos distintos (Product ID)
+Lojas (Store ID)
+Qualidade dos dados:
+% Missing por coluna (podem ser consultados em pré-análise)
+3. Book de Variáveis (Template de Documentação)
+
+O Book de Variáveis descreve cada variável “raw” e as derivadas. Na versão completa, temos 96 variáveis:
+
+19 raw (colunas originais)
+65 derivadas por janela (13 métricas × 5 janelas)
+12 métricas extras (momentum, intervalos, proporções, agregados por dimensão e flags em 12 m)
+3.1. Métricas incluídas
+Métricas Base (para cada janela u1m, u3m, u6m, u9m, u12m)
+total_amt_uXm: soma de Line Total
+count_uXm: contagem de registros (Invoice ID)
+avg_amt_uXm: média de Line Total
+RFM (para cada janela)
+frequency_uXm: compras distintas (nunique(Invoice ID))
+monetary_uXm: soma de Invoice Total
+avg_basket_uXm: linhas por fatura (número de linhas / número de faturas)
+Métricas Avançadas (para cada janela)
+avg_discount_rate_uXm: média de desconto (Discount/(Unit Price*Quantity))
+avg_unit_price_uXm: preço unitário médio
+avg_quantity_uXm: quantidade média por transação
+unique_sizes_uXm: tamanhos distintos
+unique_colors_uXm: cores distintas
+unique_pay_methods_uXm: métodos de pagamento distintos
+avg_invoice_total_uXm: ticket médio por fatura
+Métricas Extras em janela fixa 12 meses
+Momentum
+growth_total_3_6m: (total_amt_u3m – total_amt_u6m) / total_amt_u6m
+chg_count_6_12m: (count_u12m – count_u6m) / count_u6m
+Interpurchase
+mean_interpurchase_days: média dos dias entre compras
+std_interpurchase_days: desvio-padrão dos intervalos
+max_interpurchase_days: maior intervalo entre compras
+Proporções
+return_rate: proporção de transações de retorno (Transaction Type == 'return')
+promo_share: proporção de compras com desconto (Discount > 0)
+Agregados por Dimensão
+store_concentration: participação da loja com maior receita / receita total do cliente
+top_product_share: participação de gasto do produto mais comprado
+Flags / Segmentações
+high_value_flag: 1 se monetary_u12m > 90º percentil
+loyal_flag: 1 se frequency_u12m > threshold de fidelidade
+seasonal_buyer_flag: 1 se comprou em ≥3 trimestres diferentes
+3.2. Estrutura do CSV de Documentação
+Cada linha do CSV book_variaveis_full.csv possui:
+
+variable_name
+data_type
+description
+business_rule
+periodicity (raw ou snapshot @ 2025-02-28)
+target_dates (last Xm until 2025-02-28 ou vazio para raw)
+4. Código para Gerar o Book de Variáveis
+
+Salve este script como generate_book.py (ou cole no Colab). Ajuste apenas o file_path e o diretório de saída.
+
+# generate_book.py
+from datetime import datetime
+import pandas as pd
+
+# 1) Defina o caminho do CSV original (transações) e onde salvar o Book
+file_path = 'purchase_data.csv'
+output_path = 'book_variaveis_full.csv'
+
+# 2) Data de referência e janelas
+ref_date_str = '2025-02-28'
+ref_date = datetime.strptime(ref_date_str, '%Y-%m-%d')
+windows = [1, 3, 6, 9, 12]
+
+# 3) Definições das variáveis raw
+raw_vars = [
+    ('Invoice ID', 'object', 'ID da fatura.', 'Manter conforme sistema.'),
+    ('Line', 'int64', 'Número de linha na fatura.', 'Sequencial por Invoice ID.'),
+    ('Customer ID', 'int64', 'ID do cliente.', 'Referência ao cadastro.'),
+    ('Product ID', 'int64', 'ID do produto.', 'Referência ao catálogo.'),
+    ('Size', 'object', 'Tamanho do produto.', 'Conforme catálogo.'),
+    ('Color', 'object', 'Cor do produto.', 'Conforme catálogo.'),
+    ('Unit Price', 'float64', 'Preço unitário antes de desconto.', 'Tabela de preços vigente.'),
+    ('Quantity', 'int64', 'Quantidade vendida.', 'Inteiro positivo.'),
+    ('Date', 'datetime', 'Data da transação.', 'Formato YYYY-MM-DD.'),
+    ('Discount', 'float64', 'Desconto monetário na linha.', 'Unit Price*Quantity - Line Total.'),
+    ('Line Total', 'float64', 'Total da linha após desconto.', 'Unit Price*Quantity - Discount.'),
+    ('Store ID', 'int64', 'ID da loja.', 'Referência à tabela de lojas.'),
+    ('Employee ID', 'int64', 'ID do funcionário.', 'Referência ao cadastro.'),
+    ('Currency', 'object', 'Código da moeda.', 'Conforme transação.'),
+    ('Currency Symbol', 'object', 'Símbolo da moeda.', 'Derivado de Currency.'),
+    ('SKU', 'object', 'Stock Keeping Unit.', 'Conforme catálogo.'),
+    ('Transaction Type', 'object', 'Tipo de transação.', 'Padronizar categorias.'),
+    ('Payment Method', 'object', 'Método de pagamento.', 'Ex.: credit_card, cash.'),
+    ('Invoice Total', 'float64', 'Total da fatura.', 'Soma de Line Total por Invoice ID.')
+]
+
+# 4) Definições de métricas
+base_metrics = [
+    ('total_amt', 'float64', 'Soma de Line Total', 'sum(Line Total)'),
+    ('count', 'int64', 'Contagem de transações', 'count(*)'),
+    ('avg_amt', 'float64', 'Média de Line Total', 'avg(Line Total)')
+]
+rfm_metrics = [
+    ('frequency', 'int64', 'Nº compras distintas', 'count(distinct Invoice ID)'),
+    ('monetary', 'float64', 'Total gasto', 'sum(Invoice Total)'),
+    ('avg_basket', 'float64', 'Linhas por invoice', 'count(Line)/count(distinct Invoice ID)')
+]
+additional_metrics = [
+    ('avg_discount_rate', 'float64', 'Taxa média de desconto', 'avg(Discount/(Unit Price*Quantity))'),
+    ('avg_unit_price', 'float64', 'Preço unitário médio', 'avg(Unit Price)'),
+    ('avg_quantity', 'float64', 'Quantidade média', 'avg(Quantity)'),
+    ('unique_sizes', 'int64', 'Tamanhos distintos', 'count(distinct Size)'),
+    ('unique_colors', 'int64', 'Cores distintas', 'count(distinct Color)'),
+    ('unique_pay_methods', 'int64', 'Métodos pagamento distintos', 'count(distinct Payment Method)'),
+    ('avg_invoice_total', 'float64', 'Ticket médio por invoice', 'avg(Invoice Total)')
+]
+momentum_metrics = [
+    ('growth_total_3_6m', 'float64', 'Crescimento % total_amt 3m→6m', '(total_amt_u3m - total_amt_u6m)/total_amt_u6m'),
+    ('chg_count_6_12m', 'float64', 'Variação contagem 6m→12m', '(count_u12m - count_u6m)/count_u6m')
+]
+interpurchase_metrics = [
+    ('mean_interpurchase_days', 'float64', 'Média dias entre compras', 'mean(diff(Date))'),
+    ('std_interpurchase_days', 'float64', 'Desvio-padrão intervalos', 'std(diff(Date))'),
+    ('max_interpurchase_days', 'int64', 'Maior intervalo entre compras', 'max(diff(Date))')
+]
+proportion_metrics = [
+    ('return_rate', 'float64', 'Taxa de retorno', 'count(return)/count(*)'),
+    ('promo_share', 'float64', 'Share compras promo', 'count(Discount>0)/count(*)')
+]
+dimension_metrics = [
+    ('store_concentration', 'float64', '% receita loja principal', 'max(store_sales_u12m)/monetary_u12m'),
+    ('top_product_share', 'float64', '% gasto no produto top', 'gasto_produto_top/monetary_u12m')
+]
+flag_metrics = [
+    ('high_value_flag', 'bool', 'Top 10% clientes por gasto', 'monetary_u12m > pct90(monetary_u12m)'),
+    ('loyal_flag', 'bool', 'Freq. > threshold', 'frequency_u12m > thr_loyal'),
+    ('seasonal_buyer_flag', 'bool', 'Compras em 3 trimestres', 'compras_mes_repetidos>=3')
+]
+
+# 5) Monta lista de registros
+records = []
+
+# 5a) Raw
+for var, dtype, desc, rule in raw_vars:
+    records.append({
+        'variable_name': var,
+        'data_type': dtype,
+        'description': desc,
+        'business_rule': rule,
+        'periodicity': 'raw',
+        'target_dates': ''
+    })
+
+# 5b) Derivadas por janela
+for w in windows:
+    for name, dtype, desc, rule in base_metrics + rfm_metrics + additional_metrics:
+        records.append({
+            'variable_name': f'{name}_u{w}m',
+            'data_type': dtype,
+            'description': f'{desc} últimos {w} meses até {ref_date_str}.',
+            'business_rule': f'{rule} filtrado por Date > {ref_date_str} - {w} meses e <= {ref_date_str}.',
+            'periodicity': f'snapshot @ {ref_date_str}',
+            'target_dates': f'last {w} months until {ref_date_str}'
+        })
+
+# 5c) Métricas extras para janela fixa 12 meses
+for name, dtype, desc, rule in momentum_metrics + interpurchase_metrics + proportion_metrics + dimension_metrics + flag_metrics:
+    records.append({
+        'variable_name': name,
+        'data_type': dtype,
+        'description': desc,
+        'business_rule': rule,
+        'periodicity': f'snapshot @ {ref_date_str}',
+        'target_dates': f'last 12 months until {ref_date_str}'
+    })
+
+# 6) Cria DataFrame e salva
+book_df = pd.DataFrame(records)
+print(f"Total de variáveis geradas: {len(records)}")  # deve mostrar 96
+book_df.to_csv(output_path, index=False)
+print(f"✅ Book de Variáveis completo salvo em: {output_path}")
+5. Código para Calcular Features Reais por Cliente
+
+Se quiser verificar os valores gerados (por exemplo, total_amt_u3m, frequency_u6m etc.), use este script para agrupar por Customer ID e gerar as features num CSV:
+
+# generate_customer_features.py
+from datetime import datetime
+import pandas as pd
+
+# 1) Defina caminhos
+file_path = 'purchase_data.csv'
+output_path = 'customer_features.csv'
+
+# 2) Carrega e converte a coluna Date
+df = pd.read_csv(file_path)
+df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+
+# 3) Parâmetros
+ref_date = datetime(2025, 2, 28)
+windows = [1, 3, 6, 9, 12]
+
+# 4) Computa métricas para cada janela
+feature_dfs = []
+for m in windows:
+    window_start = ref_date - pd.DateOffset(months=m)
+    df_win = df[(df['Date'] > window_start) & (df['Date'] <= ref_date)]
+    
+    agg = df_win.groupby('Customer ID').agg(
+        **{f'total_amt_u{m}m':    ('Line Total',    'sum'),
+           f'count_u{m}m':        ('Invoice ID',    'count'),
+           f'avg_amt_u{m}m':      ('Line Total',    'mean'),
+           f'frequency_u{m}m':    ('Invoice ID',    'nunique'),
+           f'monetary_u{m}m':     ('Invoice Total', 'sum'),
+           f'avg_basket_u{m}m':   ('Line',          'count')}
+    ).reset_index()
+    
+    # Ajuste avg_basket (linhas por fatura)
+    agg[f'avg_basket_u{m}m'] = agg[f'avg_basket_u{m}m'] / agg[f'frequency_u{m}m']
+    
+    # 5) Interpurchase por janela (opcional)
+    diff_days = (
+        df_win.sort_values(['Customer ID','Date'])
+              .groupby('Customer ID')['Date']
+              .diff()
+              .dt.days
+    )
+    ip = diff_days.groupby(df_win['Customer ID']).agg(
+        **{f'mean_interpurchase_u{m}m': 'mean',
+           f'std_interpurchase_u{m}m': 'std',
+           f'max_interpurchase_u{m}m': 'max'}
+    ).reset_index()
+    
+    # 6) Proporções por janela (return_rate, promo_share)
+    prop = df_win.groupby('Customer ID').agg(
+        **{f'return_rate_u{m}m':  ('Transaction Type', lambda s: (s=='return').mean()),
+           f'promo_share_u{m}m':  ('Discount', lambda s: (s>0).mean())}
+    ).reset_index()
+    
+    # 7) Concatena tudo (agg + ip + prop)
+    feat = agg.merge(ip, on='Customer ID', how='left')\
+              .merge(prop, on='Customer ID', how='left')
+    feat = feat.fillna(0)
+    feature_dfs.append(feat)
+
+# 8) Une todas as janelas num único DataFrame
+features = feature_dfs[0]
+for df_feat in feature_dfs[1:]:
+    features = features.merge(df_feat, on='Customer ID', how='outer')
+
+features = features.fillna(0)
+
+# 9) Exibe as primeiras linhas (para debug) e salva CSV
+print(features.head(10))
+features.to_csv(output_path, index=False)
+print(f"✅ Features de cliente geradas e salvas em: {output_path}")
+Observações
+Se quiser incluir store_concentration, top_product_share ou flags, basta adicionar novos blocos de agregação dentro do loop (similar aos passos 5, 6 e 7).
+Para rodar no Colab, copie os scripts num notebook, monte o Drive e ajuste as variáveis file_path e output_path para as pastas no Drive.
+6. Resumo dos Resultados
+
+Book de Variáveis: 96 variáveis documentadas (19 raw + 65 derivadas por janela + 12 métricas extras fixas)
+Features por Cliente: colunas como total_amt_u1m, count_u3m, frequency_u6m, mean_interpurchase_u9m, return_rate_u12m etc.
+Os CSVs gerados (book_variaveis_full.csv e customer_features.csv) podem ser usados para:
+Documentação completa para a equipe de Data Science
+Alimentar pipelines de modelagem (churn, segmentação, previsão de demanda)
+Dashboards de monitoramento de métricas (RFM, promoções, performance de loja)
